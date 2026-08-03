@@ -103,10 +103,17 @@ Overlapping runs are skipped, never queued.
 
 ## Hostinger deployment (24×7)
 
+**LIVE since 03-08-2026 at https://mulltiply.amitbook.com** (hPanel Web App
+"mulltiply.amitbook.com", auto-deployment ON, keep-alive cron on the
+dl.atlasconnect.in site: `*/5 * * * * curl -s -o /dev/null
+https://mulltiply.amitbook.com/health` — the Web App product has no cron menu
+of its own, so the ping lives on that classic site).
+
 Every push to `main` runs `.github/workflows/deploy.yml`: typecheck → tests →
 build → force-push a ready-to-run **`deploy` branch** (compiled `dist/` +
-production `node_modules` + minimal `package.json`). Hostinger serves that
-branch with **no build step** — the same pattern as erp.amitbook.com.
+production `node_modules` + minimal `package.json`). Hostinger's Git
+integration auto-deploys that branch with **no build step** (entry
+`dist/server.js`, Fastify preset, Node 22).
 
 One-time hPanel setup:
 
