@@ -101,16 +101,52 @@ Overlapping runs are skipped, never queued.
 6. Full sync: `npm run sync:full` (~38.5k books, 129 batches, ~2 min).
 7. Enable the scheduler (`SYNC_SCHEDULE_ENABLED=true`) and restart the server.
 
-## Hostinger deployment (owner steps)
+## Hostinger deployment (24×7)
 
-1. Push this repo to GitHub (already wired: `ankitkedia24/MULLTIPLYAPI`).
-2. hPanel → Node.js app: repo = this project, build = `npm install && npm run build`,
-   entry file = `dist/server.js`, Node ≥22.
-3. Set every `.env` variable in the panel's environment section (never commit `.env`).
-4. Point a subdomain (e.g. `mulltiply.amitbook.com`) at the app.
-5. Passenger may idle the process, which pauses the in-process scheduler — add an
-   hPanel cron as backup, e.g. hourly:
-   `curl -s -X POST https://<your-domain>/sync -H "x-admin-key: $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{"mode":"incremental"}'`
+Every push to `main` runs `.github/workflows/deploy.yml`: typecheck → tests →
+build → force-push a ready-to-run **`deploy` branch** (compiled `dist/` +
+production `node_modules` + minimal `package.json`). Hostinger serves that
+branch with **no build step** — the same pattern as erp.amitbook.com.
+
+One-time hPanel setup:
+
+1. **Subdomain** — hPanel → Domains → Subdomains: create
+   `mulltiply.amitbook.com` (or similar) and issue SSL.
+2. **Node.js app** — create the app on that subdomain:
+   repo `ankitkedia24/MULLTIPLYAPI`, branch **`deploy`**, build command
+   **(none)**, start command `npm start`, Node 22. Connect the GitHub account
+   if the repo is private.
+3. **Host `.env`** — create it in the app directory (File Manager or SSH):
+
+   ```
+   SUPABASE_URL=https://vlfogshdsrkqdeqaguqr.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=<service role key>
+   ADMIN_API_KEY=<fresh random, e.g. openssl rand -hex 24>
+   MULLTIPLY_BASE_URL=https://api.mulltiply.com
+   MULLTIPLY_API_KEY=            # blank until Mulltiply sends the key
+   SYNC_SCHEDULE_ENABLED=false   # flip to true at go-live
+   TZ=Asia/Kolkata               # host is UTC; makes SYNC_FULL_HOUR mean IST
+   DATA_DIR=/home/<hosting-user>/mulltiply-data   # OUTSIDE the app dir,
+                                                  # survives redeploys
+   ```
+
+   Do **not** set `PORT` — the panel assigns it and the panel's value wins.
+4. **Deploy** — hPanel → Deployments → Deploy, then restart the app.
+   Optional: paste the panel's deployment webhook URL into GitHub
+   (repo → Settings → Webhooks) so every push goes live automatically.
+5. **Cron jobs** (hPanel → Advanced → Cron Jobs) — required for 24×7, because
+   Passenger idles quiet Node apps, which would pause the internal scheduler:
+   - keep-alive, every 10 min:
+     `curl -s https://mulltiply.amitbook.com/health > /dev/null`
+   - optional backstop once live, hourly:
+     `curl -s -X POST https://mulltiply.amitbook.com/sync -H "x-admin-key: <ADMIN_API_KEY>" -H "Content-Type: application/json" -d '{"mode":"incremental"}'`
+6. **Verify** — `curl https://mulltiply.amitbook.com/health` → `{"ok":true,…}`;
+   then a dry run:
+   `curl -X POST https://mulltiply.amitbook.com/sync -H "x-admin-key: …" -H "Content-Type: application/json" -d '{"mode":"full","dryRun":true,"limit":5}'`
+   and check `GET /status`.
+7. **Go-live** (when Mulltiply's key arrives) — fill `MULLTIPLY_API_KEY`, set
+   `SYNC_SCHEDULE_ENABLED=true`, restart the app, then follow the go-live
+   checklist above.
 
 ## Data-quality notes (owner)
 

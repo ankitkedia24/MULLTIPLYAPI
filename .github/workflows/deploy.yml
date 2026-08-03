@@ -1,0 +1,77 @@
+# Build on GitHub, publish a ready-to-run `deploy` branch for Hostinger.
+#
+# Same pattern as erp.amitbook.com: Actions compiles and force-pushes a
+# `deploy` branch that Hostinger's Git deployment serves with ZERO build step
+# (build command: none · start command: npm start · branch: deploy).
+#
+# Unlike the ERP's self-contained Nitro build, this tsc output needs its
+# runtime deps (fastify, zod), so the branch ships production node_modules
+# too — assembled with `npm install --omit=dev` (Atlas Connect bundle pattern).
+name: Build & publish deploy branch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Assemble deploy directory
+        run: |
+          mkdir -p out
+          cp -r dist out/dist
+          node -e "
+            const fs = require('fs');
+            const src = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            fs.writeFileSync('out/package.json', JSON.stringify({
+              name: 'mulltiply-item-sync',
+              private: true,
+              type: 'module',
+              engines: { node: '>=22' },
+              // build is a no-op: the branch ships pre-built. Present so host
+              // presets that insist on running 'npm run build' don't fail.
+              scripts: { build: 'echo prebuilt', start: 'node dist/server.js' },
+              dependencies: src.dependencies,
+            }, null, 2) + '\n');
+          "
+          cd out && npm install --omit=dev --no-audit --no-fund
+
+      - name: Force-push deploy branch
+        run: |
+          cd out
+          # node_modules must ride along — the host runs no install step
+          printf 'data/\n.env\n' > .gitignore
+          git init -b deploy
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A -f node_modules .
+          git commit -qm "deploy: build of ${GITHUB_SHA}"
+          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deploy
