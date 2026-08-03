@@ -1,0 +1,30 @@
+{
+  "name": "mulltiply-item-sync",
+  "version": "1.0.0",
+  "description": "Syncs Amit Book Depot's item master (books) from the AMITCLOUD ERP to Mulltiply AI's Item Sync API",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "mock": "tsx mock/mulltiply-mock.ts",
+    "sync:full": "tsx src/cli.ts --full",
+    "sync:incr": "tsx src/cli.ts --incremental",
+    "preview": "tsx src/cli.ts --full --dry-run --limit 5",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

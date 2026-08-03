@@ -1,0 +1,14 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+
+# runtime state & run reports
+data/
+
+# build output
+dist/
+
+node_modules/
+*.log
+.claude/
