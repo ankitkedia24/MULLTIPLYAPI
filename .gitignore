@@ -12,3 +12,7 @@ dist/
 node_modules/
 *.log
 .claude/
+
+# brief build artifacts
+docs/.*.html
+docs/.*.png
