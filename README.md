@@ -32,13 +32,22 @@ Spec: `docs/Item Sync API document.docx` · https://docs.mulltiply.ai/item/
 - We honor `Retry-After`, back off exponentially on 429/5xx, and parse the
   documented partial-failure envelope (`data.errors[]`) into per-ISBN reports.
 
-**Open questions for Mulltiply** (please confirm):
-1. API key delivery + rate limits / preferred max batch size.
-2. Is `gst: 0` accepted for GST-exempt goods?
-3. Do the variant labels `Binding` / `Language` render correctly for buyers?
-4. How do we retire/delist an item (the API has no delete)? We can re-sync with
-   `availableQuantity: 0` if that's the convention.
-5. In partial-failure responses, is `errors[].row` 0-based or 1-based?
+**UAT verified 07-08-2026** (base `https://api.mulltiply.app`): full catalogue
+38,515 items / 129 batches accepted, zero row errors; update-without-duplicate
+proven; `gst: 0` accepted; `Binding`/`Language` variant labels render; no rate
+limiting at 300 items/batch with 500 ms spacing.
+
+**Facts confirmed by Mulltiply's team:**
+1. **Ingestion is asynchronous** — the API 200 means *queued*; per-batch
+   progress appears in the seller panel under Items → Custom Item Logs
+   (`/main/items/custom-item-logs`), one `sync_data_<timestamp>` entry per PUT.
+2. Row-level errors are reported with the item index and also appear in those
+   logs after processing.
+3. **Delisting is manual** in the Mulltiply panel (single item or bulk via
+   Excel) — not via this API.
+4. Production workspace being created; production API key to follow.
+   **Still to confirm at go-live: the production base URL** (docs say
+   `api.mulltiply.com`, UAT is `api.mulltiply.app`).
 
 ## Quick start (local, no Mulltiply key needed)
 
