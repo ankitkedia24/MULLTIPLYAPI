@@ -37,7 +37,7 @@ describe("bookToItem", () => {
     expect(item.skus).toHaveLength(1);
     expect(sku.syncId).toBe("9780001000018");
     expect(sku.sellerSKU).toBe("9780001000018");
-    expect(sku.productCode).toBe("9780001000018");
+    expect(sku.productCode).toBe("D659"); // additional_book_code wins
     expect(sku.barCode).toBe("9780001000018");
     expect(sku.hsnCode).toBe("4901");
     expect(sku.gst).toBe(0);
@@ -162,6 +162,20 @@ describe("bookToItem", () => {
     const isbn10 = { ...base, isbn: "030640615X" };
     const { item: ten } = okItem(bookToItem(isbn10, cfg));
     expect(ten.skus[0]!.barCode).toBe("030640615X");
+  });
+
+  it("maps productCode from additional_book_code with ISBN fallback", () => {
+    // no additional code → productCode falls back to the ISBN
+    const noCode = okItem(bookToItem(byIsbn("9780001000025"), cfg)).item;
+    expect(noCode.skus[0]!.productCode).toBe("9780001000025");
+    expect(noCode.skus[0]!.sellerSKU).toBe("9780001000025");
+
+    // Excel artifacts on the code are stripped, blank code falls back
+    const base = byIsbn("9780001000018");
+    const dirty = { ...base, additional_book_code: "`D659'" };
+    expect(okItem(bookToItem(dirty, cfg)).item.skus[0]!.productCode).toBe("D659");
+    const blank = { ...base, additional_book_code: "   " };
+    expect(okItem(bookToItem(blank, cfg)).item.skus[0]!.productCode).toBe("9780001000018");
   });
 
   it("respects SYNC_PRICE_FIELD when configured", () => {

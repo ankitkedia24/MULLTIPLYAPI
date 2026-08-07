@@ -23,8 +23,10 @@ Spec: `docs/Item Sync API document.docx` · https://docs.mulltiply.ai/item/
   **array** of items, in batches of ≤300 (configurable).
 - One book = one item with exactly **one SKU** (books have no size/colour
   variants) and **one base selling unit** (`PCS`, multiplier 1).
-- `syncId` (item and SKU) = the book's ISBN / internal item code — stable and
-  globally unique. `barCode` is set only when the code is a real ISBN-10/13.
+- `syncId` (item and SKU) and `sellerSKU` = the book's ISBN / internal item
+  code — stable and globally unique. `barCode` is set only when the code is a
+  real ISBN-10/13. `productCode` = the ERP's Additional Book Code (dealer
+  code, e.g. "D659"), falling back to the ISBN when no code is maintained.
 - Books are GST-exempt: `gst: 0`, `hsnCode: "4901"`. Variant pairs are
   `Binding` (PB/HB) and `Language` — both relabelable via env if your platform
   expects different labels.

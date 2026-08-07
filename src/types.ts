@@ -1,6 +1,7 @@
 /** Row shape fetched from AMITCLOUD's public.books via PostgREST. */
 export interface BookRow {
   isbn: string | null;
+  additional_book_code: string | null;
   book_name: string | null;
   short_description: string | null;
   author_name: string | null;

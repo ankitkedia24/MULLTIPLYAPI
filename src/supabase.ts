@@ -3,6 +3,7 @@ import type { BookRow } from "./types.js";
 
 const BOOK_COLUMNS = [
   "isbn",
+  "additional_book_code",
   "book_name",
   "short_description",
   "author_name",

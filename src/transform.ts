@@ -95,6 +95,10 @@ export function bookToItem(row: BookRow, cfg: Config): TransformResult {
       ? bookName.slice(0, SKU_NICKNAME_MAX).trimEnd()
       : bookName;
 
+  // owner's mapping: productCode = ERP "Additional Book Code" (e.g. dealer
+  // code "D659"), falling back to the ISBN where no code is maintained
+  const productCode = cleanCode(row.additional_book_code) || isbn;
+
   const item: MulltiplyItem = {
     itemName: bookName,
     description,
@@ -109,7 +113,7 @@ export function bookToItem(row: BookRow, cfg: Config): TransformResult {
         skuNickName,
         sellerSKU: isbn,
         tags: null,
-        productCode: isbn,
+        productCode,
         barCode: isIsbnLike(isbn) ? isbn : null,
         hsnCode: cfg.SYNC_HSN_CODE,
         gst: cfg.SYNC_GST_PERCENT,
