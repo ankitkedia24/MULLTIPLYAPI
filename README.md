@@ -114,7 +114,13 @@ Overlapping runs are skipped, never queued.
 
 ## Hostinger deployment (24×7)
 
-**LIVE since 03-08-2026 at https://mulltiply.amitbook.com** (hPanel Web App
+**PRODUCTION SYNC LIVE since 10-08-2026**: production key installed
+(base `https://api.mulltiply.com`), scheduler ON (nightly full 02:00 IST +
+30-min incremental stock refresh), first full production sync completed —
+38,515 books, 129/129 batches, zero errors, 94 s. Production seller panel:
+https://seller.mulltiply.ai/.
+
+**Service LIVE since 03-08-2026 at https://mulltiply.amitbook.com** (hPanel Web App
 "mulltiply.amitbook.com", auto-deployment ON, keep-alive cron on the
 dl.atlasconnect.in site: `*/5 * * * * curl -s -o /dev/null
 https://mulltiply.amitbook.com/health` — the Web App product has no cron menu
