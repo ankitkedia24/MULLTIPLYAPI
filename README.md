@@ -153,7 +153,7 @@ One-time hPanel setup:
    MULLTIPLY_API_KEY=            # blank until Mulltiply sends the key
    SYNC_SCHEDULE_ENABLED=false   # flip to true at go-live
    TZ=Asia/Kolkata               # host is UTC; makes SYNC_FULL_HOUR mean IST
-   DATA_DIR=/home/<hosting-user>/mulltiply-data   # OUTSIDE the app dir,
+   DATA_DIR=/home/<hosting-user>/mulltiply-data   # OUTSIDE the app dir (set in production 11-08-2026),
                                                   # survives redeploys
    ```
 
