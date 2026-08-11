@@ -31,6 +31,9 @@ const envSchema = z.object({
   SYNC_BATCH_DELAY_MS: z.coerce.number().int().min(0).default(500),
   SYNC_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(5),
 
+  /** Look-back window (minutes) for incremental runs when no watermark exists. */
+  SYNC_INCR_WINDOW_MINUTES: z.coerce.number().int().min(5).default(60),
+
   SYNC_SCHEDULE_ENABLED: z
     .string()
     .default("false")

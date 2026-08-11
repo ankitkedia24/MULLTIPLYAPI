@@ -156,6 +156,55 @@ describe("runSync end-to-end against the mock Mulltiply server", () => {
     for (const e of flagged) expect(e.isbn).not.toBe("");
   });
 
+  it("incremental without a watermark uses a bounded window, never a full fetch", async () => {
+    const { port } = await startMock({ apiKey: "test-key" });
+    const dataDir = await tempDataDir(); // empty — no state.json, no watermark
+    const cfg = makeTestConfig({
+      MULLTIPLY_BASE_URL: `http://127.0.0.1:${port}`,
+      DATA_DIR: dataDir,
+    });
+
+    let receivedSince: string | undefined;
+    const before = Date.now();
+    await runSync(
+      cfg,
+      { mode: "incremental" },
+      {
+        fetchBooksImpl: async (_cfg, opts) => {
+          receivedSince = opts?.since;
+          return [];
+        },
+        log: silent,
+      },
+    );
+
+    expect(receivedSince).toBeDefined(); // the old behaviour passed undefined = fetch everything
+    const sinceMs = new Date(receivedSince!).getTime();
+    const windowMs = cfg.SYNC_INCR_WINDOW_MINUTES * 60_000;
+    expect(before - sinceMs).toBeGreaterThanOrEqual(windowMs - 5_000);
+    expect(before - sinceMs).toBeLessThanOrEqual(windowMs + 60_000);
+  });
+
+  it("a zero-change successful incremental advances the watermark", async () => {
+    const { port } = await startMock({ apiKey: "test-key" });
+    const dataDir = await tempDataDir();
+    const cfg = makeTestConfig({
+      MULLTIPLY_BASE_URL: `http://127.0.0.1:${port}`,
+      DATA_DIR: dataDir,
+    });
+
+    const report = await runSync(
+      cfg,
+      { mode: "incremental" },
+      { fetchBooksImpl: async () => [], log: silent },
+    );
+
+    expect(report.status).toBe("completed");
+    expect(report.totals.sent).toBe(0);
+    const state = await readState(dataDir);
+    expect(state.lastSyncAt).toBe(report.startedAt);
+  });
+
   it("aborts the whole run on a bad API key", async () => {
     const { port } = await startMock({ apiKey: "different-key" });
     const dataDir = await tempDataDir();

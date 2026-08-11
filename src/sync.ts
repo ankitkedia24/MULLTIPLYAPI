@@ -110,7 +110,16 @@ export async function runSync(
           new Date(state.lastSyncAt).getTime() - INCREMENTAL_OVERLAP_MS,
         ).toISOString();
       } else {
-        log("No previous sync watermark — incremental run will fetch everything.");
+        // never fall back to a full fetch — on ephemeral hosting the state
+        // file can vanish (deploys/restarts), and refetching everything every
+        // 30 minutes floods the partner's ingestion queue. A bounded window
+        // covers the gap; the nightly full sync reconciles anything older.
+        since = new Date(
+          startedAt.getTime() - cfg.SYNC_INCR_WINDOW_MINUTES * 60_000,
+        ).toISOString();
+        log(
+          `No previous sync watermark — using bounded ${cfg.SYNC_INCR_WINDOW_MINUTES}-minute window (since ${since}).`,
+        );
       }
     }
 
@@ -193,12 +202,14 @@ export async function runSync(
 
     report.status = deriveStatus(report);
 
-    // advance the watermark only when every batch was accepted by Mulltiply;
-    // row-level data errors do NOT block it (resending bad data cannot fix it)
-    const allAccepted =
-      report.batches.length > 0 &&
-      report.totals.accepted === report.batches.length;
-    if (!dryRun && !opts.isbn && !opts.limit && allAccepted) {
+    // advance the watermark on every fully-successful run — including runs
+    // that found nothing to send (they prove there were no changes up to
+    // runStart). Failed batches block the advance so the next run retries the
+    // same window; row-level data errors do NOT block it (resending bad data
+    // cannot fix it).
+    const fullySuccessful =
+      report.status !== "failed" && report.batches.every((b) => b.accepted);
+    if (!dryRun && !opts.isbn && !opts.limit && fullySuccessful) {
       const state = await readState(cfg.DATA_DIR);
       state.lastSyncAt = report.startedAt;
       if (opts.mode === "full") state.lastFullSyncAt = report.startedAt;

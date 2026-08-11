@@ -75,8 +75,11 @@ npx tsx src/cli.ts --isbn 9781234567890 [--dry-run]
 
 - **full** — every book matching `SYNC_BOOK_FILTER` (default: all active books).
 - **incremental** — only books whose `updated_at` moved since the last
-  successful sync (stock movements bump `updated_at`, so stock changes are
-  caught). 60s overlap protects against clock skew.
+  successful sync (stock movements bump `updated_at`, so price, quantity and
+  new-book changes are all caught). 60s overlap protects against clock skew.
+  If the watermark is missing (fresh deploy), the run looks back only
+  `SYNC_INCR_WINDOW_MINUTES` (default 60) — **an incremental never pushes the
+  whole catalogue**; the nightly full sync reconciles anything older.
 - **dry-run** — transform + validate only; nothing is sent.
 
 ## Admin API server
