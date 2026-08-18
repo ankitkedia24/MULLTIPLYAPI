@@ -58,6 +58,7 @@ describe("bookToItem", () => {
       isBaseUnit: true,
       isDefault: true,
       includeGST: true,
+      syncId: "9780001000018", // required on every unit (their inventory API)
       isActive: true,
     });
   });

@@ -13,7 +13,9 @@ const sellingUnitSchema = z.object({
   isBaseUnit: z.boolean(),
   isDefault: z.boolean(),
   includeGST: z.literal(true),
-  syncId: nonEmpty.optional(),
+  // required on EVERY unit since Mulltiply's 12-08-2026 spec correction —
+  // their inventory-sync API addresses selling units by this id
+  syncId: nonEmpty,
   isActive: z.boolean(),
 });
 
@@ -50,15 +52,6 @@ const skuSchema = z
         path: ["sellingUnits"],
         message: "base selling unit must have multiplier=1",
       });
-    }
-    for (const u of sku.sellingUnits) {
-      if (!u.isBaseUnit && !u.syncId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["sellingUnits"],
-          message: "non-base selling units require a syncId",
-        });
-      }
     }
   });
 

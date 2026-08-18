@@ -133,6 +133,9 @@ export function bookToItem(row: BookRow, cfg: Config): TransformResult {
             isBaseUnit: true,
             isDefault: true,
             includeGST: true,
+            // required on every unit (Mulltiply spec correction 12-08-2026):
+            // it is how their inventory-sync API addresses this selling unit
+            syncId: isbn,
             isActive: true,
           },
         ],

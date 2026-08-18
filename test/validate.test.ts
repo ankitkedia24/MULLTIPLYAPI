@@ -35,6 +35,7 @@ function goodItem(syncId: string): MulltiplyItem {
             isBaseUnit: true,
             isDefault: true,
             includeGST: true,
+            syncId,
             isActive: true,
           },
         ],
@@ -84,19 +85,11 @@ describe("validateItems", () => {
     expect(invalid[0]!.errors.join(" ")).toContain("isBaseUnit");
   });
 
-  it("requires syncId on non-base units", () => {
+  it("requires syncId on every selling unit", () => {
     const bad = goodItem("B4");
-    bad.skus[0]!.sellingUnits.push({
-      name: "CTN",
-      multiplier: 10,
-      mrp: 1000,
-      sellingPrice: 1000,
-      isBaseUnit: false,
-      isDefault: false,
-      includeGST: true,
-      isActive: true,
-    });
-    const { invalid } = validateItems([bad]);
+    bad.skus[0]!.sellingUnits[0]!.syncId = "";
+    const { valid, invalid } = validateItems([bad]);
+    expect(valid).toHaveLength(0);
     expect(invalid[0]!.errors.join(" ")).toContain("syncId");
   });
 });

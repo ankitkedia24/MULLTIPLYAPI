@@ -104,8 +104,9 @@ function validateItem(item: AnyItem, seenSkuSyncIds: Set<string>): string[] {
         errors.push(`skus[${i}].sellingUnits[${j}].includeGST must be true`);
       }
       if (unit["isBaseUnit"] === true) baseCount++;
-      if (unit["isBaseUnit"] === false && !isNonEmptyString(unit["syncId"])) {
-        errors.push(`skus[${i}].sellingUnits[${j}].syncId is required for non-base units`);
+      // spec correction 12-08-2026: syncId required on EVERY selling unit
+      if (!isNonEmptyString(unit["syncId"])) {
+        errors.push(`skus[${i}].sellingUnits[${j}].syncId is required`);
       }
     }
     if (baseCount !== 1) errors.push(`skus[${i}] must have exactly one base selling unit`);

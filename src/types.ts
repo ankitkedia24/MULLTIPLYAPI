@@ -33,7 +33,8 @@ export interface MulltiplySellingUnit {
   isBaseUnit: boolean;
   isDefault: boolean;
   includeGST: boolean;
-  syncId?: string;
+  /** Required on every unit — their inventory-sync API addresses units by it. */
+  syncId: string;
   isActive: boolean;
 }
 
