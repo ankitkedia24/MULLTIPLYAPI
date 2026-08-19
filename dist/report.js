@@ -1,0 +1,51 @@
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+function runsDir(dataDir) {
+    return join(dataDir, "runs");
+}
+export async function writeReport(dataDir, report) {
+    const dir = runsDir(dataDir);
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, `run-${report.runId}.json`);
+    await writeFile(file, JSON.stringify(report, null, 2), "utf8");
+    return file;
+}
+export async function readLatestReport(dataDir) {
+    try {
+        const files = (await readdir(runsDir(dataDir)))
+            .filter((f) => f.startsWith("run-") && f.endsWith(".json"))
+            .sort();
+        const latest = files.at(-1);
+        if (!latest)
+            return null;
+        const raw = await readFile(join(runsDir(dataDir), latest), "utf8");
+        return JSON.parse(raw);
+    }
+    catch {
+        return null;
+    }
+}
+/** Human-readable one-screen summary for CLI output and logs. */
+export function formatSummary(report) {
+    const t = report.totals;
+    const lines = [
+        `Run ${report.runId} (${report.mode}${report.dryRun ? ", DRY RUN" : ""}) — ${report.status}`,
+        `  Duration : ${(report.durationMs / 1000).toFixed(1)}s`,
+        `  Fetched  : ${t.fetched}`,
+        `  Skipped  : ${t.skipped}`,
+        `  Invalid  : ${t.invalid}`,
+        `  Sent     : ${t.sent} (${report.batches.length} batches, ${t.accepted} accepted)`,
+        `  RowErrors: ${t.rowErrors}`,
+    ];
+    if (t.stockOnly > 0 || t.stockRejected > 0) {
+        lines.push(`  StockAPI : ${t.stockOnly} stock-only rows${t.stockRejected ? `, ${t.stockRejected} rejected → re-sent as items` : ""}`);
+    }
+    const warnings = Object.entries(report.warningCounts);
+    if (warnings.length > 0) {
+        lines.push(`  Warnings : ${warnings.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    }
+    if (report.fatalError)
+        lines.push(`  FATAL    : ${report.fatalError}`);
+    return lines.join("\n");
+}
+//# sourceMappingURL=report.js.map

@@ -1,0 +1,16 @@
+{
+  "name": "mulltiply-item-sync",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "echo prebuilt",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  }
+}
