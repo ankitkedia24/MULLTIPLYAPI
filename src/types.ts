@@ -94,8 +94,9 @@ export type TransformResult =
   | { status: "ok"; item: MulltiplyItem; warnings: string[] }
   | { status: "skip"; isbn: string; bookName: string; reason: string };
 
-/** One pushed batch's outcome. */
+/** One pushed batch's outcome — full items or lightweight stock updates. */
 export interface BatchResult {
+  kind: "items" | "stock";
   batchNo: number;
   itemCount: number;
   httpStatus: number | null;
@@ -103,6 +104,12 @@ export interface BatchResult {
   accepted: boolean;
   rowErrors: Array<{ isbn: string; itemName: string; errors: string[] }>;
   error?: string;
+}
+
+/** A stock-only change routed to the inventory API. */
+export interface StockUpdate {
+  isbn: string;
+  quantity: number;
 }
 
 export type RunMode = "full" | "incremental";
@@ -121,9 +128,14 @@ export interface RunReport {
     fetched: number;
     skipped: number;
     invalid: number;
+    /** Items sent via the full item-sync API. */
     sent: number;
     accepted: number;
     rowErrors: number;
+    /** Rows routed to the lightweight inventory API (stock-only changes). */
+    stockOnly: number;
+    /** Stock rows their inventory API rejected (then retried as item-sync). */
+    stockRejected: number;
   };
   warningCounts: Record<string, number>;
   skipped: Array<{ isbn: string; bookName: string; reason: string }>;

@@ -1,5 +1,14 @@
 import type { Config } from "./config.js";
-import { MulltiplyAuthError, pushBatch } from "./mulltiply-client.js";
+import {
+  computeFingerprint,
+  loadFingerprints,
+  saveFingerprints,
+} from "./fingerprint.js";
+import {
+  MulltiplyAuthError,
+  pushBatch,
+  pushStockBatch,
+} from "./mulltiply-client.js";
 import { formatSummary, writeReport } from "./report.js";
 import { readState, writeState } from "./state.js";
 import type { FetchImpl } from "./supabase.js";
@@ -11,6 +20,7 @@ import type {
   RunMode,
   RunReport,
   RunStatus,
+  StockUpdate,
 } from "./types.js";
 import { validateItems } from "./validate.js";
 
@@ -57,6 +67,12 @@ export class SyncBusyError extends Error {
 /** Overlap subtracted from the watermark so clock skew can't drop rows. */
 const INCREMENTAL_OVERLAP_MS = 60_000;
 
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 export async function runSync(
   cfg: Config,
   opts: SyncOptions,
@@ -93,7 +109,16 @@ export async function runSync(
     finishedAt: "",
     durationMs: 0,
     status: "completed",
-    totals: { fetched: 0, skipped: 0, invalid: 0, sent: 0, accepted: 0, rowErrors: 0 },
+    totals: {
+      fetched: 0,
+      skipped: 0,
+      invalid: 0,
+      sent: 0,
+      accepted: 0,
+      rowErrors: 0,
+      stockOnly: 0,
+      stockRejected: 0,
+    },
     warningCounts: {},
     skipped: [],
     invalid: [],
@@ -165,38 +190,147 @@ export async function runSync(
       `Transformed ${items.length} items (${report.totals.skipped} skipped, ${invalid.length} invalid).`,
     );
 
+    // ---- route: stock-only changes → inventory API, the rest → item-sync ----
+    const fpCache = new Map<string, string>();
+    const fingerprint = (item: MulltiplyItem): string => {
+      let fp = fpCache.get(item.syncId);
+      if (!fp) {
+        fp = computeFingerprint(item);
+        fpCache.set(item.syncId, fp);
+      }
+      return fp;
+    };
+
+    let itemsToSync = valid;
+    const stockUpdates: StockUpdate[] = [];
+    const routeStock =
+      !dryRun &&
+      cfg.SYNC_STOCK_API_ENABLED &&
+      opts.mode === "incremental" &&
+      !opts.isbn;
+    const fingerprints = dryRun ? {} : await loadFingerprints(cfg.DATA_DIR);
+
+    if (routeStock && valid.length > 0) {
+      const routed: MulltiplyItem[] = [];
+      for (const item of valid) {
+        if (fingerprints[item.syncId] === fingerprint(item)) {
+          stockUpdates.push({
+            isbn: item.syncId,
+            quantity:
+              item.skus[0]?.sellingUnits[0]?.availableQuantity ?? 0,
+          });
+        } else {
+          routed.push(item);
+        }
+      }
+      itemsToSync = routed;
+      report.totals.stockOnly = stockUpdates.length;
+      if (stockUpdates.length > 0) {
+        log(
+          `Routing: ${routed.length} via item-sync, ${stockUpdates.length} stock-only via inventory API.`,
+        );
+      }
+    }
+
     if (dryRun) {
       log("Dry run — nothing sent to Mulltiply.");
     } else if (valid.length === 0) {
       log("Nothing to send.");
     } else {
-      const batches: MulltiplyItem[][] = [];
-      for (let i = 0; i < valid.length; i += cfg.SYNC_BATCH_SIZE) {
-        batches.push(valid.slice(i, i + cfg.SYNC_BATCH_SIZE));
-      }
-      inFlight.phase = "pushing";
-      inFlight.batchesTotal = batches.length;
-      log(`Pushing ${valid.length} items in ${batches.length} batches of ≤${cfg.SYNC_BATCH_SIZE}…`);
+      const byIsbn = new Map(valid.map((i) => [i.syncId, i]));
+      const pushedItemBatches: Array<{ items: MulltiplyItem[]; result: BatchResult }> = [];
+      const itemBatches = chunk(itemsToSync, cfg.SYNC_BATCH_SIZE);
+      const stockBatches = chunk(stockUpdates, cfg.SYNC_STOCK_BATCH_SIZE);
 
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i]!;
-        const result: BatchResult = await pushBatch(
+      inFlight.phase = "pushing";
+      inFlight.batchesTotal = itemBatches.length + stockBatches.length;
+      if (itemsToSync.length > 0) {
+        log(
+          `Pushing ${itemsToSync.length} items in ${itemBatches.length} batches of ≤${cfg.SYNC_BATCH_SIZE}…`,
+        );
+      }
+
+      const pushItemBatch = async (batch: MulltiplyItem[]): Promise<BatchResult> => {
+        const result = await pushBatch(
           batch,
-          i + 1,
+          report.batches.length + 1,
           cfg,
           deps.fetchImpl ?? fetch,
         );
         report.batches.push(result);
+        pushedItemBatches.push({ items: batch, result });
         report.totals.sent += batch.length;
         if (result.accepted) report.totals.accepted += 1;
         report.totals.rowErrors += result.rowErrors.length;
-        inFlight.batchesDone = i + 1;
+        inFlight!.batchesDone += 1;
         log(
-          `  batch ${i + 1}/${batches.length}: ${result.accepted ? "ok" : `FAILED (${result.error})`}${result.rowErrors.length ? `, ${result.rowErrors.length} row errors` : ""}`,
+          `  items batch ${result.batchNo}: ${result.accepted ? "ok" : `FAILED (${result.error})`}${result.rowErrors.length ? `, ${result.rowErrors.length} row errors` : ""}`,
         );
-        if (i < batches.length - 1 && cfg.SYNC_BATCH_DELAY_MS > 0) {
-          await sleep(cfg.SYNC_BATCH_DELAY_MS);
+        return result;
+      };
+
+      for (const batch of itemBatches) {
+        await pushItemBatch(batch);
+        if (cfg.SYNC_BATCH_DELAY_MS > 0) await sleep(cfg.SYNC_BATCH_DELAY_MS);
+      }
+
+      if (stockBatches.length > 0) {
+        log(
+          `Pushing ${stockUpdates.length} stock updates in ${stockBatches.length} batches of ≤${cfg.SYNC_STOCK_BATCH_SIZE}…`,
+        );
+        const rejectedIsbns = new Set<string>();
+        for (const batch of stockBatches) {
+          const result = await pushStockBatch(
+            batch,
+            report.batches.length + 1,
+            cfg,
+            deps.fetchImpl ?? fetch,
+          );
+          report.batches.push(result);
+          if (result.accepted) report.totals.accepted += 1;
+          inFlight!.batchesDone += 1;
+          for (const e of result.rowErrors) {
+            if (e.isbn) rejectedIsbns.add(e.isbn);
+          }
+          log(
+            `  stock batch ${result.batchNo}: ${result.accepted ? "ok" : `FAILED (${result.error})`}${result.rowErrors.length ? `, ${result.rowErrors.length} rejected` : ""}`,
+          );
+          if (cfg.SYNC_BATCH_DELAY_MS > 0) await sleep(cfg.SYNC_BATCH_DELAY_MS);
         }
+
+        // self-heal: stock rows their inventory API rejected (e.g. selling
+        // unit not found) are re-sent as full items in the same run
+        report.totals.stockRejected = rejectedIsbns.size;
+        if (rejectedIsbns.size > 0) {
+          const fallback = [...rejectedIsbns]
+            .map((isbn) => byIsbn.get(isbn))
+            .filter((i): i is MulltiplyItem => Boolean(i));
+          if (fallback.length > 0) {
+            log(
+              `Re-sending ${fallback.length} rejected stock rows as full item-sync…`,
+            );
+            for (const batch of chunk(fallback, cfg.SYNC_BATCH_SIZE)) {
+              inFlight!.batchesTotal = (inFlight!.batchesTotal ?? 0) + 1;
+              await pushItemBatch(batch);
+            }
+          }
+        }
+      }
+
+      // remember the master-data fingerprint of every successfully
+      // item-synced book, so future stock-only changes can be routed cheaply
+      if (pushedItemBatches.length > 0) {
+        let changed = false;
+        for (const { items: batchItems, result } of pushedItemBatches) {
+          if (!result.accepted) continue;
+          const errored = new Set(result.rowErrors.map((e) => e.isbn));
+          for (const item of batchItems) {
+            if (errored.has(item.syncId)) continue;
+            fingerprints[item.syncId] = fingerprint(item);
+            changed = true;
+          }
+        }
+        if (changed) await saveFingerprints(cfg.DATA_DIR, fingerprints);
       }
     }
 

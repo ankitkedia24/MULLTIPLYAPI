@@ -82,6 +82,17 @@ npx tsx src/cli.ts --isbn 9781234567890 [--dry-run]
   If the watermark is missing (fresh deploy), the run looks back only
   `SYNC_INCR_WINDOW_MINUTES` (default 60) — **an incremental never pushes the
   whole catalogue**; the nightly full sync reconciles anything older.
+- **stock-only routing (Phase 2, live 19-08-2026)** — incrementals keep a
+  per-book master-data fingerprint (`fingerprints.json` in `DATA_DIR`,
+  refreshed on every successful item-sync). Changed books whose fingerprint is
+  unchanged (pure stock movement) go as compact
+  `{syncId: "external://variant/<isbn>", inventoryQuantity}` batches to
+  `POST /v2/godowns/thirdparty-stock-sync` instead of full item objects; only
+  real master-data edits and new books use item-sync. Rows the inventory API
+  rejects (e.g. selling unit not found) are automatically re-sent as full
+  items in the same run. Knobs: `SYNC_STOCK_API_ENABLED` (default true —
+  the off switch reverts everything to item-sync), `SYNC_STOCK_BATCH_SIZE`
+  (500), `SYNC_STOCK_SYNCID_PREFIX` (`external://variant/`).
 - **dry-run** — transform + validate only; nothing is sent.
 
 ## Admin API server

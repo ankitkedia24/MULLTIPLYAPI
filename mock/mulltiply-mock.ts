@@ -197,6 +197,77 @@ export function buildMockApp(opts: MockOptions) {
     );
   });
 
+  // Inventory sync API — stock-only updates addressed by selling-unit syncId
+  // with the "external://variant/" prefix (docs.mulltiply.ai/inventory).
+  app.post("/v2/godowns/thirdparty-stock-sync", async (req, reply) => {
+    requestCount++;
+
+    if (req.headers["x-api-key"] !== opts.apiKey) {
+      return reply.code(401).send({
+        error: true,
+        status: false,
+        statusCode: 401,
+        responseTimestamp: new Date().toISOString(),
+        data: { message: "Invalid API key" },
+      });
+    }
+
+    if (opts.error500Every && requestCount % opts.error500Every === 0) {
+      return reply.code(500).send({
+        error: true,
+        status: false,
+        statusCode: 500,
+        responseTimestamp: new Date().toISOString(),
+        data: { message: "Synthetic internal error (chaos mode)" },
+      });
+    }
+
+    const body = req.body;
+    if (!Array.isArray(body)) {
+      return reply.code(400).send({
+        error: true,
+        status: false,
+        statusCode: 400,
+        responseTimestamp: new Date().toISOString(),
+        data: { message: "Request body must be a JSON array" },
+      });
+    }
+
+    const PREFIX = "external://variant/";
+    const nonProcessablesStocks: Array<{ syncId: string; reason: string }> = [];
+    let validRowsCount = 0;
+
+    for (const raw of body) {
+      const entry = raw as AnyItem;
+      const sid = isNonEmptyString(entry["syncId"]) ? (entry["syncId"] as string) : "";
+      const qty = entry["inventoryQuantity"];
+      if (!sid.startsWith(PREFIX) || sid.length <= PREFIX.length) {
+        nonProcessablesStocks.push({ syncId: sid, reason: "invalid syncId" });
+        continue;
+      }
+      if (typeof qty !== "number" || !Number.isFinite(qty) || qty < 0) {
+        nonProcessablesStocks.push({ syncId: sid, reason: "invalid inventoryQuantity" });
+        continue;
+      }
+      const bare = sid.slice(PREFIX.length);
+      const item = store.get(bare);
+      if (!item || !Array.isArray(item.skus)) {
+        nonProcessablesStocks.push({ syncId: sid, reason: "selling unit not found" });
+        continue;
+      }
+      for (const sku of item.skus as AnyItem[]) {
+        const units = sku["sellingUnits"];
+        if (!Array.isArray(units)) continue;
+        for (const unit of units as AnyItem[]) {
+          if (unit["syncId"] === bare) unit["availableQuantity"] = qty;
+        }
+      }
+      validRowsCount++;
+    }
+
+    return reply.send(envelope({ validRowsCount, nonProcessablesStocks }));
+  });
+
   app.get("/debug/items", async (req) => {
     const query = req.query as Record<string, string | undefined>;
     return {

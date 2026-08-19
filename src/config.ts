@@ -34,6 +34,15 @@ const envSchema = z.object({
   /** Look-back window (minutes) for incremental runs when no watermark exists. */
   SYNC_INCR_WINDOW_MINUTES: z.coerce.number().int().min(5).default(60),
 
+  /** Route stock-only changes through Mulltiply's inventory API (Phase 2). */
+  SYNC_STOCK_API_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v.toLowerCase() === "true"),
+  SYNC_STOCK_BATCH_SIZE: z.coerce.number().int().min(1).max(5000).default(500),
+  /** Their inventory API expects syncIds as "<prefix><unitSyncId>". */
+  SYNC_STOCK_SYNCID_PREFIX: z.string().default("external://variant/"),
+
   SYNC_SCHEDULE_ENABLED: z
     .string()
     .default("false")

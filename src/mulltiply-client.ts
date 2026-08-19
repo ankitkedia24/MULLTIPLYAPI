@@ -1,7 +1,12 @@
 import type { Config } from "./config.js";
 import type { FetchImpl } from "./supabase.js";
 import { sleep } from "./supabase.js";
-import type { BatchResult, MulltiplyItem, MulltiplyResponse } from "./types.js";
+import type {
+  BatchResult,
+  MulltiplyItem,
+  MulltiplyResponse,
+  StockUpdate,
+} from "./types.js";
 
 /** Thrown on 401/403 — the whole run must abort, every batch would fail. */
 export class MulltiplyAuthError extends Error {
@@ -11,23 +16,24 @@ export class MulltiplyAuthError extends Error {
   }
 }
 
-/**
- * PUT one batch of items to Mulltiply's /v2/items/sync-data.
- * Retries 429/5xx/network errors with exponential backoff + jitter,
- * honoring Retry-After. Parses their partial-failure envelope and maps
- * row errors back to ISBNs (row index first, itemName match as fallback —
- * their docs don't state whether `row` is 0- or 1-based).
- */
-export async function pushBatch(
-  items: MulltiplyItem[],
-  batchNo: number,
-  cfg: Config,
-  fetchImpl: FetchImpl = fetch,
-): Promise<BatchResult> {
-  const url = `${cfg.MULLTIPLY_BASE_URL}/v2/items/sync-data`;
-  const body = JSON.stringify(items);
-  const maxRetries = cfg.SYNC_MAX_RETRIES;
+function backoffMs(attempt: number): number {
+  const base = Math.min(1000 * 2 ** (attempt - 1), 16000);
+  return base + Math.floor(Math.random() * 250);
+}
 
+/**
+ * Send one request with the shared retry policy: 429/5xx/network errors back
+ * off exponentially (honouring Retry-After), 401/403 throws MulltiplyAuthError.
+ * Returns the final response, or null when every attempt failed.
+ */
+async function sendWithRetry(
+  url: string,
+  method: "PUT" | "POST",
+  body: string,
+  cfg: Config,
+  fetchImpl: FetchImpl,
+): Promise<{ res: Response | null; attempts: number; lastError: string }> {
+  const maxRetries = cfg.SYNC_MAX_RETRIES;
   let attempts = 0;
   let lastError = "";
 
@@ -36,7 +42,7 @@ export async function pushBatch(
     let res: Response;
     try {
       res = await fetchImpl(url, {
-        method: "PUT",
+        method,
         headers: {
           "Content-Type": "application/json",
           "x-api-key": cfg.MULLTIPLY_API_KEY,
@@ -70,44 +76,159 @@ export async function pushBatch(
       break;
     }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return {
-        batchNo,
-        itemCount: items.length,
-        httpStatus: res.status,
-        attempts,
-        accepted: false,
-        rowErrors: [],
-        error: `HTTP ${res.status}: ${text.slice(0, 500)}`,
-      };
-    }
+    return { res, attempts, lastError };
+  }
 
-    const parsed = (await res.json().catch(() => null)) as MulltiplyResponse | null;
+  return { res: null, attempts, lastError };
+}
+
+/**
+ * PUT one batch of items to Mulltiply's /v2/items/sync-data. Parses their
+ * partial-failure envelope and maps row errors back to ISBNs (row index
+ * first, itemName match as fallback — their docs don't state whether `row`
+ * is 0- or 1-based).
+ */
+export async function pushBatch(
+  items: MulltiplyItem[],
+  batchNo: number,
+  cfg: Config,
+  fetchImpl: FetchImpl = fetch,
+): Promise<BatchResult> {
+  const url = `${cfg.MULLTIPLY_BASE_URL}/v2/items/sync-data`;
+  const { res, attempts, lastError } = await sendWithRetry(
+    url,
+    "PUT",
+    JSON.stringify(items),
+    cfg,
+    fetchImpl,
+  );
+
+  if (!res) {
     return {
+      kind: "items",
+      batchNo,
+      itemCount: items.length,
+      httpStatus: null,
+      attempts,
+      accepted: false,
+      rowErrors: [],
+      error: `gave up after ${attempts} attempts (${lastError})`,
+    };
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      kind: "items",
       batchNo,
       itemCount: items.length,
       httpStatus: res.status,
       attempts,
-      accepted: true,
-      rowErrors: mapRowErrors(parsed, items),
+      accepted: false,
+      rowErrors: [],
+      error: `HTTP ${res.status}: ${text.slice(0, 500)}`,
     };
   }
 
+  const parsed = (await res.json().catch(() => null)) as MulltiplyResponse | null;
   return {
+    kind: "items",
     batchNo,
     itemCount: items.length,
-    httpStatus: null,
+    httpStatus: res.status,
     attempts,
-    accepted: false,
-    rowErrors: [],
-    error: `gave up after ${attempts} attempts (${lastError})`,
+    accepted: true,
+    rowErrors: mapRowErrors(parsed, items),
   };
 }
 
-function backoffMs(attempt: number): number {
-  const base = Math.min(1000 * 2 ** (attempt - 1), 16000);
-  return base + Math.floor(Math.random() * 250);
+/**
+ * POST one batch of stock-only updates to Mulltiply's inventory API
+ * (/v2/godowns/thirdparty-stock-sync). Each entry is addressed by the
+ * selling-unit syncId with their required prefix. Rejected rows come back in
+ * `nonProcessablesStocks` and are surfaced as rowErrors so the caller can
+ * fall back to a full item-sync for those books.
+ */
+export async function pushStockBatch(
+  updates: StockUpdate[],
+  batchNo: number,
+  cfg: Config,
+  fetchImpl: FetchImpl = fetch,
+): Promise<BatchResult> {
+  const url = `${cfg.MULLTIPLY_BASE_URL}/v2/godowns/thirdparty-stock-sync`;
+  const body = JSON.stringify(
+    updates.map((u) => ({
+      syncId: `${cfg.SYNC_STOCK_SYNCID_PREFIX}${u.isbn}`,
+      inventoryQuantity: u.quantity,
+    })),
+  );
+  const { res, attempts, lastError } = await sendWithRetry(
+    url,
+    "POST",
+    body,
+    cfg,
+    fetchImpl,
+  );
+
+  if (!res) {
+    return {
+      kind: "stock",
+      batchNo,
+      itemCount: updates.length,
+      httpStatus: null,
+      attempts,
+      accepted: false,
+      rowErrors: [],
+      error: `gave up after ${attempts} attempts (${lastError})`,
+    };
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      kind: "stock",
+      batchNo,
+      itemCount: updates.length,
+      httpStatus: res.status,
+      attempts,
+      accepted: false,
+      rowErrors: [],
+      error: `HTTP ${res.status}: ${text.slice(0, 500)}`,
+    };
+  }
+
+  // lenient parsing — their documented shape is
+  // { data: { validRowsCount, nonProcessablesStocks: [{syncId, reason?}] } }
+  const parsed = (await res.json().catch(() => null)) as
+    | Record<string, unknown>
+    | null;
+  const data = (parsed?.["data"] ?? parsed) as Record<string, unknown> | null;
+  const raw = data?.["nonProcessablesStocks"];
+  const rowErrors: BatchResult["rowErrors"] = Array.isArray(raw)
+    ? raw.map((e) => {
+        const entry = e as Record<string, unknown>;
+        const sid = String(entry?.["syncId"] ?? "");
+        const reason =
+          entry?.["reason"] ?? entry?.["message"] ?? entry?.["error"] ?? JSON.stringify(entry);
+        return {
+          isbn: sid.startsWith(cfg.SYNC_STOCK_SYNCID_PREFIX)
+            ? sid.slice(cfg.SYNC_STOCK_SYNCID_PREFIX.length)
+            : sid,
+          itemName: "",
+          errors: [String(reason)],
+        };
+      })
+    : [];
+
+  return {
+    kind: "stock",
+    batchNo,
+    itemCount: updates.length,
+    httpStatus: res.status,
+    attempts,
+    accepted: true,
+    rowErrors,
+  };
 }
 
 function mapRowErrors(

@@ -205,6 +205,81 @@ describe("runSync end-to-end against the mock Mulltiply server", () => {
     expect(state.lastSyncAt).toBe(report.startedAt);
   });
 
+  it("routes stock-only changes through the inventory API after fingerprints are seeded", async () => {
+    const { app, port } = await startMock({ apiKey: "test-key" });
+    const dataDir = await tempDataDir();
+    const cfg = makeTestConfig({
+      MULLTIPLY_BASE_URL: `http://127.0.0.1:${port}`,
+      DATA_DIR: dataDir,
+    });
+
+    // full run seeds items on the mock AND fingerprints locally
+    await runSync(cfg, { mode: "full" }, { fetchBooksImpl: fetchFixtures, log: silent });
+
+    // 1) stock-only change → inventory API, no item batches
+    const base = fixtures.find((r) => r.isbn === "9780001000018")!;
+    const stockChanged = [{ ...base, closing_stock: 3 }];
+    const r1 = await runSync(
+      cfg,
+      { mode: "incremental" },
+      { fetchBooksImpl: async () => stockChanged, log: silent },
+    );
+    expect(r1.totals.stockOnly).toBe(1);
+    expect(r1.totals.sent).toBe(0);
+    expect(r1.batches.map((b) => b.kind)).toEqual(["stock"]);
+    expect(r1.status).toBe("completed");
+    const item = (await app.inject({ method: "GET", url: "/debug/items/9780001000018" })).json();
+    expect(item.skus[0].sellingUnits[0].availableQuantity).toBe(3);
+
+    // 2) price change → item-sync, no stock batches
+    const priceChanged = [{ ...base, sale_rate: 550, sale_retail_price: 550, sale_net_price: 550 }];
+    const r2 = await runSync(
+      cfg,
+      { mode: "incremental" },
+      { fetchBooksImpl: async () => priceChanged, log: silent },
+    );
+    expect(r2.totals.stockOnly).toBe(0);
+    expect(r2.totals.sent).toBe(1);
+    expect(r2.batches.map((b) => b.kind)).toEqual(["items"]);
+
+    // 3) fingerprint was refreshed by run 2 — same price + new stock → stock-only again
+    const stockAgain = [{ ...base, sale_rate: 550, sale_retail_price: 550, sale_net_price: 550, closing_stock: 8 }];
+    const r3 = await runSync(
+      cfg,
+      { mode: "incremental" },
+      { fetchBooksImpl: async () => stockAgain, log: silent },
+    );
+    expect(r3.totals.stockOnly).toBe(1);
+    expect(r3.totals.sent).toBe(0);
+  });
+
+  it("re-sends rejected stock rows as full items (self-heal)", async () => {
+    const { app, port } = await startMock({ apiKey: "test-key" });
+    const dataDir = await tempDataDir();
+    const cfg = makeTestConfig({
+      MULLTIPLY_BASE_URL: `http://127.0.0.1:${port}`,
+      DATA_DIR: dataDir,
+    });
+
+    await runSync(cfg, { mode: "full" }, { fetchBooksImpl: fetchFixtures, log: silent });
+    // wipe the mock store: fingerprints say "stock-only" but their side lost the item
+    await app.inject({ method: "DELETE", url: "/debug/items" });
+
+    const base = fixtures.find((r) => r.isbn === "9780001000018")!;
+    const r = await runSync(
+      cfg,
+      { mode: "incremental" },
+      { fetchBooksImpl: async () => [{ ...base, closing_stock: 12 }], log: silent },
+    );
+
+    expect(r.totals.stockOnly).toBe(1);
+    expect(r.totals.stockRejected).toBe(1);
+    expect(r.totals.sent).toBe(1); // the fallback item-sync
+    expect(r.batches.map((b) => b.kind)).toEqual(["stock", "items"]);
+    const item = (await app.inject({ method: "GET", url: "/debug/items/9780001000018" })).json();
+    expect(item.skus[0].sellingUnits[0].availableQuantity).toBe(12);
+  });
+
   it("aborts the whole run on a bad API key", async () => {
     const { port } = await startMock({ apiKey: "different-key" });
     const dataDir = await tempDataDir();

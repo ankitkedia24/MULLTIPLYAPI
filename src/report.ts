@@ -40,6 +40,11 @@ export function formatSummary(report: RunReport): string {
     `  Sent     : ${t.sent} (${report.batches.length} batches, ${t.accepted} accepted)`,
     `  RowErrors: ${t.rowErrors}`,
   ];
+  if (t.stockOnly > 0 || t.stockRejected > 0) {
+    lines.push(
+      `  StockAPI : ${t.stockOnly} stock-only rows${t.stockRejected ? `, ${t.stockRejected} rejected → re-sent as items` : ""}`,
+    );
+  }
   const warnings = Object.entries(report.warningCounts);
   if (warnings.length > 0) {
     lines.push(
