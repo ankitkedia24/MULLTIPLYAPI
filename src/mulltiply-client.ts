@@ -26,7 +26,7 @@ function backoffMs(attempt: number): number {
  * off exponentially (honouring Retry-After), 401/403 throws MulltiplyAuthError.
  * Returns the final response, or null when every attempt failed.
  */
-async function sendWithRetry(
+export async function sendWithRetry(
   url: string,
   method: "PUT" | "POST",
   body: string,

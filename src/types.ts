@@ -155,4 +155,16 @@ export interface SyncState {
     finishedAt: string;
     totals: RunReport["totals"];
   } | null;
+  /** Customer sync (retailers) keeps its own watermark — added 12-09-2026. */
+  customer?: {
+    lastSyncAt: string | null;
+    lastFullSyncAt: string | null;
+    lastRun: {
+      runId: string;
+      mode: RunMode;
+      status: RunStatus;
+      finishedAt: string;
+      totals: { fetched: number; skipped: number; sent: number; accepted: number; rowErrors: number };
+    } | null;
+  };
 }

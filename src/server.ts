@@ -2,6 +2,15 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import { z } from "zod";
 import { loadConfig } from "./config.js";
+import { fetchCustomers } from "./customers/feed.js";
+import {
+  CustomerSyncBusyError,
+  getCustomerInFlight,
+  readLatestCustomerReport,
+  runCustomerSync,
+} from "./customers/sync.js";
+import { customerToRetailer } from "./customers/transform.js";
+import type { MulltiplyRetailer } from "./customers/types.js";
 import { readLatestReport } from "./report.js";
 import { startScheduler } from "./scheduler.js";
 import { readState } from "./state.js";
@@ -107,11 +116,62 @@ app.get("/preview", async (req, reply) => {
 app.get("/status", async () => {
   const state = await readState(cfg.DATA_DIR);
   const latestReport = await readLatestReport(cfg.DATA_DIR);
+  const latestCustomerReport = await readLatestCustomerReport(cfg.DATA_DIR);
   return {
     inFlight: getInFlight(),
+    customerInFlight: getCustomerInFlight(),
     state,
     latestReport,
+    latestCustomerReport,
   };
+});
+
+// ── customers (retailers) ─────────────────────────────────────────────────
+const customerSyncBodySchema = z
+  .object({
+    mode: z.enum(["full", "incremental"]).default("full"),
+    dryRun: z.boolean().default(false),
+    limit: z.number().int().positive().max(100000).optional(),
+    customerCode: z.string().min(1).optional(),
+  })
+  .default({ mode: "full", dryRun: false });
+
+app.post("/sync/customers", async (req, reply) => {
+  const parsed = customerSyncBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const inFlight = getCustomerInFlight();
+  if (inFlight) return reply.code(409).send({ error: "customer sync already running", inFlight });
+  const runId = new Date().toISOString().replace(/[:.]/g, "-").replace("Z", "");
+  void runCustomerSync(cfg, { ...parsed.data, runId }, { log: (m) => app.log.info(m) }).catch((err) => {
+    if (!(err instanceof CustomerSyncBusyError)) app.log.error(err);
+  });
+  return reply.code(202).send({ started: true, runId, opts: parsed.data });
+});
+
+app.get("/preview/customers", async (req, reply) => {
+  const query = req.query as Record<string, string | undefined>;
+  const customerCode = query.code?.trim() || undefined;
+  const limit = customerCode ? undefined : Math.min(Number(query.limit) || 5, 100);
+  const rows = await fetchCustomers(cfg, { customerCode, limit });
+  const payload: MulltiplyRetailer[] = [];
+  const skipped: Array<{ customerCode: string; customerName: string; reason: string }> = [];
+  const warningCounts: Record<string, number> = {};
+  for (const row of rows) {
+    const r = customerToRetailer(row, cfg);
+    if (r.status === "skip") skipped.push({ customerCode: r.customerCode, customerName: r.customerName, reason: r.reason });
+    else {
+      for (const w of r.warnings) warningCounts[w] = (warningCounts[w] ?? 0) + 1;
+      payload.push(r.retailer);
+    }
+  }
+  return reply.send({
+    fetched: rows.length,
+    validCount: payload.length,
+    skipped,
+    warningCounts,
+    note: "payload is exactly what would be POSTed to /v2/retailers/sync-data",
+    payload,
+  });
 });
 
 if (cfg.SYNC_SCHEDULE_ENABLED) {

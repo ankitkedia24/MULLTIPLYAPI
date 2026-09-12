@@ -268,6 +268,68 @@ export function buildMockApp(opts: MockOptions) {
     return reply.send(envelope({ validRowsCount, nonProcessablesStocks }));
   });
 
+  // Customer Sync API — POST /v2/retailers/sync-data, per docs.mulltiply.ai/customer.
+  // Independent validation again; accepted retailers upsert by syncId. Their
+  // documented response has NO envelope: { count, message, nonProcessableRows? }.
+  const retailers = new Map<string, Record<string, unknown>>();
+  app.post("/v2/retailers/sync-data", async (req, reply) => {
+    requestCount++;
+    if (req.headers["x-api-key"] !== opts.apiKey) {
+      return reply.code(401).send({ error: true, status: false, statusCode: 401, data: { message: "Invalid API key" } });
+    }
+    if (opts.error500Every && requestCount % opts.error500Every === 0) {
+      return reply.code(500).send({ error: true, status: false, statusCode: 500, data: { message: "Synthetic internal error (chaos mode)" } });
+    }
+    const body = req.body;
+    if (!Array.isArray(body)) {
+      return reply.code(400).send({ count: 0, message: "Request body must be a JSON array of retailers" });
+    }
+    const nonProcessableRows: Array<{ row: number; errors: string[] }> = [];
+    for (const [row, raw] of body.entries()) {
+      const r = raw as Record<string, unknown>;
+      const errors: string[] = [];
+      if (!isNonEmptyString(r["syncId"])) errors.push("Missing syncId");
+      if (!isNonEmptyString(r["name"])) errors.push("Missing retailer name");
+      if (!isNonEmptyString(r["firstName"])) errors.push("Missing firstName");
+      if (!/^[6-9][0-9]{9}$/.test(String(r["phone"] ?? ""))) errors.push("Invalid phone number");
+      if (!isNonEmptyString(r["phoneCountryCode"])) errors.push("Missing phoneCountryCode");
+      const shops = r["shops"];
+      if (Array.isArray(shops)) {
+        for (const s of shops as Array<Record<string, unknown>>) {
+          if (!isNonEmptyString(s["syncId"])) errors.push("Missing shop syncId");
+          if (!isNonEmptyString(s["shopName"])) errors.push("Missing shop name");
+          if (s["customerSyncId"] !== r["syncId"]) errors.push("Shop customerSyncId mismatch");
+        }
+      }
+      if (opts.failRowEvery && (row + 1) % opts.failRowEvery === 0) errors.push("Synthetic row failure (chaos mode)");
+      if (errors.length) { nonProcessableRows.push({ row, errors }); continue; }
+      retailers.set(r["syncId"] as string, r);
+    }
+    if (nonProcessableRows.length === 0) {
+      return reply.send({ count: body.length, message: "All rows are being synced. You will be notified once done." });
+    }
+    return reply.send({
+      count: body.length - nonProcessableRows.length,
+      message: "Some rows had validation errors and were not processed. Please check the nonProcessableRows field for details.",
+      nonProcessableRows: nonProcessableRows.slice(0, 20),
+    });
+  });
+
+  app.get("/debug/retailers", async (req) => {
+    const query = req.query as Record<string, string | undefined>;
+    return {
+      count: retailers.size,
+      syncIds: query.full ? undefined : [...retailers.keys()],
+      retailers: query.full ? [...retailers.values()] : undefined,
+    };
+  });
+  app.get("/debug/retailers/:syncId", async (req, reply) => {
+    const { syncId } = req.params as { syncId: string };
+    const r = retailers.get(syncId);
+    if (!r) return reply.code(404).send({ error: "not found" });
+    return r;
+  });
+
   app.get("/debug/items", async (req) => {
     const query = req.query as Record<string, string | undefined>;
     return {

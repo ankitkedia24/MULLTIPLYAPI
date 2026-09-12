@@ -1,4 +1,5 @@
 import type { Config } from "./config.js";
+import { CustomerSyncBusyError, runCustomerSync } from "./customers/sync.js";
 import { SyncBusyError, runSync } from "./sync.js";
 
 export interface SchedulerHandle {
@@ -39,6 +40,19 @@ export function startScheduler(
         log(`[scheduler] skipped ${mode} sync — another run is in progress`);
       } else {
         log(`[scheduler] ${mode} sync failed: ${String(err)}`);
+      }
+    }
+    // Customers ride the same tick, after the items, so their weekly full
+    // lands right behind the item full and their deltas every half hour.
+    if (!cfg.CUSTOMER_SYNC_ENABLED) return;
+    try {
+      log(`[scheduler] starting ${mode} customer sync`);
+      await runCustomerSync(cfg, { mode });
+    } catch (err) {
+      if (err instanceof CustomerSyncBusyError) {
+        log(`[scheduler] skipped ${mode} customer sync — another run is in progress`);
+      } else {
+        log(`[scheduler] ${mode} customer sync failed: ${String(err)}`);
       }
     }
   };

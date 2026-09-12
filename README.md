@@ -130,6 +130,33 @@ Overlapping runs are skipped, never queued.
 6. Full sync: `npm run sync:full` (~38.5k books, 129 batches, ~2 min).
 7. Enable the scheduler (`SYNC_SCHEDULE_ENABLED=true`) and restart the server.
 
+## Customers (retailers) — added 12-09-2026
+
+Mulltiply identifies a retailer on WhatsApp by mobile number, so the ERP decides
+who goes and which number in ONE place: the view `public.mulltiply_customer_feed`
+(AMITCLOUD migration 20260912120000). Eligible = customer/both party, not
+inactive, not CASH, with a non-cancelled sales document in the current or the
+previous financial year; `mobile` = first valid Indian mobile from
+whatsapp → mobile → phone (Odisha 06xx landlines rejected); `changed_at` =
+greatest(party edit, latest sale) so a first-time buyer becomes eligible
+without any edit. Rows without a mobile are fetched and listed as skipped in
+the run report so the office can fill numbers in. No balances leave the ERP.
+
+Mapping: syncId = customer code with "/" → "-" (HO/A001 → HO-A001), one
+primary shop `<syncId>/MAIN`, billing + shipping address from the party
+address, provinceCode from the state name, tags = alias, GSTIN only when
+15-char valid, email only when valid. Batches of `CUSTOMER_BATCH_SIZE` (200).
+Schedule: same ticks as items — weekly full right after the item full,
+incremental every `SYNC_INCR_MINUTES` on `changed_at`; own watermark
+(`state.customer`). Off-switch: `CUSTOMER_SYNC_ENABLED=false`.
+
+    npm run customers:preview                # dry run, 5 rows, nothing sent
+    npm run customers:full / customers:incr
+    npx tsx src/cli.ts --customers --code HO/A001 [--dry-run]
+    POST /sync/customers {"mode":"full"|"incremental","dryRun":bool,"limit":N,"customerCode":"…"}
+    GET  /preview/customers?limit=5 | ?code=HO/A001
+    GET  /status → customerInFlight, state.customer, latestCustomerReport
+
 ## Hostinger deployment (24×7)
 
 **PRODUCTION SYNC LIVE since 10-08-2026**: production key installed
@@ -214,7 +241,11 @@ src/mulltiply-client.ts  batched PUT with retry/backoff/partial-failure parsing
 src/sync.ts        orchestrator: fetch → transform → validate → push → report
 src/state.ts       data/state.json watermark (atomic writes)
 src/report.ts      data/runs/*.json + console summaries
-src/scheduler.ts   weekly full + periodic incremental
+src/scheduler.ts   weekly full + periodic incremental (items, then customers)
+src/customers/     customer (retailer) sync — feed.ts reads the ERP view
+                   mulltiply_customer_feed, transform.ts maps to their retailer
+                   shape (one primary shop, no balances), client.ts POSTs to
+                   /v2/retailers/sync-data, sync.ts runs + watermarks it
 src/server.ts      Fastify admin API
 src/cli.ts         one-shot runs
 mock/mulltiply-mock.ts   local stand-in for Mulltiply's endpoint (+ /debug/items)

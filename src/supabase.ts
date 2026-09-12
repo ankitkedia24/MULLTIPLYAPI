@@ -103,7 +103,7 @@ export async function fetchBooks(
 }
 
 /** Retry transient network/5xx errors when reading from Supabase. */
-async function fetchWithRetry(
+export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   fetchImpl: FetchImpl,

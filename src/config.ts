@@ -62,6 +62,15 @@ const envSchema = z.object({
   SYNC_INCR_MINUTES: z.coerce.number().int().min(0).default(30),
 
   DATA_DIR: z.string().default("./data"),
+
+  // Customer (retailer) sync — POST /v2/retailers/sync-data, added 12-09-2026.
+  // Rides the same schedule as items: weekly full (right after the item full),
+  // incremental every SYNC_INCR_MINUTES. Off-switch for the whole pipeline.
+  CUSTOMER_SYNC_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v.toLowerCase() === "true"),
+  CUSTOMER_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).default(200),
 });
 
 export type Config = z.infer<typeof envSchema>;

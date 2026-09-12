@@ -14,6 +14,9 @@
     "sync:full": "tsx src/cli.ts --full",
     "sync:incr": "tsx src/cli.ts --incremental",
     "preview": "tsx src/cli.ts --full --dry-run --limit 5",
+    "customers:full": "tsx src/cli.ts --customers --full",
+    "customers:incr": "tsx src/cli.ts --customers --incremental",
+    "customers:preview": "tsx src/cli.ts --customers --full --dry-run --limit 5",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
