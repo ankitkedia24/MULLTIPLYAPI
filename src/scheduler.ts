@@ -6,10 +6,23 @@ export interface SchedulerHandle {
 }
 
 /**
- * In-process scheduler: nightly FULL sync at SYNC_FULL_HOUR (server local
- * time) plus an INCREMENTAL sync every SYNC_INCR_MINUTES. A run that
- * overlaps an in-flight one is skipped, not queued.
+ * In-process scheduler: a FULL sync at SYNC_FULL_HOUR on SYNC_FULL_WEEKDAY
+ * (weekly, Sunday by default — Mulltiply asked for the complete catalogue once
+ * a week, 12-09-2026; "daily" restores the nightly run) plus an INCREMENTAL
+ * sync every SYNC_INCR_MINUTES. A run that overlaps an in-flight one is
+ * skipped, not queued.
  */
+
+/** The next full-sync instant strictly after `now` (server local time). */
+export function nextFullSyncAt(cfg: Pick<Config, "SYNC_FULL_HOUR" | "SYNC_FULL_WEEKDAY">, now: Date): Date {
+  const next = new Date(now);
+  next.setHours(cfg.SYNC_FULL_HOUR, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  if (cfg.SYNC_FULL_WEEKDAY !== "daily") {
+    while (next.getDay() !== cfg.SYNC_FULL_WEEKDAY) next.setDate(next.getDate() + 1);
+  }
+  return next;
+}
 export function startScheduler(
   cfg: Config,
   log: (msg: string) => void = console.log,
@@ -32,11 +45,9 @@ export function startScheduler(
 
   const scheduleNextFull = () => {
     const now = new Date();
-    const next = new Date(now);
-    next.setHours(cfg.SYNC_FULL_HOUR, 0, 0, 0);
-    if (next <= now) next.setDate(next.getDate() + 1);
+    const next = nextFullSyncAt(cfg, now);
     const waitMs = next.getTime() - now.getTime();
-    log(`[scheduler] next full sync at ${next.toLocaleString()}`);
+    log(`[scheduler] next full sync at ${next.toLocaleString()} (${cfg.SYNC_FULL_WEEKDAY === "daily" ? "daily" : "weekly"})`);
     fullTimer = setTimeout(async () => {
       await trigger("full");
       scheduleNextFull();

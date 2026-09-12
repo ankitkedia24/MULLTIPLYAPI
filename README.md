@@ -81,7 +81,7 @@ npx tsx src/cli.ts --isbn 9781234567890 [--dry-run]
   new-book changes are all caught). 60s overlap protects against clock skew.
   If the watermark is missing (fresh deploy), the run looks back only
   `SYNC_INCR_WINDOW_MINUTES` (default 60) — **an incremental never pushes the
-  whole catalogue**; the nightly full sync reconciles anything older.
+  whole catalogue**; the weekly full sync reconciles anything older.
 - **stock-only routing (Phase 2, live 19-08-2026)** — incrementals keep a
   per-book master-data fingerprint (`fingerprints.json` in `DATA_DIR`,
   refreshed on every successful item-sync). Changed books whose fingerprint is
@@ -112,7 +112,9 @@ Run reports are also written to `data/runs/run-<timestamp>.json`.
 ## Scheduler
 
 Set `SYNC_SCHEDULE_ENABLED=true` to run, inside the server process:
-- a **full** sync nightly at `SYNC_FULL_HOUR` (default 02:00 server time), and
+- a **full** sync once a week — `SYNC_FULL_WEEKDAY` (0 = Sunday, the default; Mulltiply asked for the
+  complete catalogue once a week, 12-09-2026; `daily` restores the nightly run) at `SYNC_FULL_HOUR`
+  (default 02:00 server time), and
 - an **incremental** sync every `SYNC_INCR_MINUTES` (default 30) for fresh stock.
 
 Overlapping runs are skipped, never queued.
@@ -131,7 +133,7 @@ Overlapping runs are skipped, never queued.
 ## Hostinger deployment (24×7)
 
 **PRODUCTION SYNC LIVE since 10-08-2026**: production key installed
-(base `https://api.mulltiply.com`), scheduler ON (nightly full 02:00 IST +
+(base `https://api.mulltiply.com`), scheduler ON (weekly full Sunday 02:00 IST +
 30-min incremental stock refresh), first full production sync completed —
 38,515 books, 129/129 batches, zero errors, 94 s. Production seller panel:
 https://seller.mulltiply.ai/.
@@ -212,7 +214,7 @@ src/mulltiply-client.ts  batched PUT with retry/backoff/partial-failure parsing
 src/sync.ts        orchestrator: fetch → transform → validate → push → report
 src/state.ts       data/state.json watermark (atomic writes)
 src/report.ts      data/runs/*.json + console summaries
-src/scheduler.ts   nightly full + periodic incremental
+src/scheduler.ts   weekly full + periodic incremental
 src/server.ts      Fastify admin API
 src/cli.ts         one-shot runs
 mock/mulltiply-mock.ts   local stand-in for Mulltiply's endpoint (+ /debug/items)

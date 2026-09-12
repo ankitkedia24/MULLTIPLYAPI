@@ -48,6 +48,17 @@ const envSchema = z.object({
     .default("false")
     .transform((v) => v.toLowerCase() === "true"),
   SYNC_FULL_HOUR: z.coerce.number().int().min(0).max(23).default(2),
+  // Mulltiply asked (12-09-2026) for the complete catalogue once a WEEK, not
+  // every night; the 30-minute incrementals carry everything in between.
+  // 0 = Sunday … 6 = Saturday, in server local time (TZ=Asia/Kolkata on the
+  // host). Set to "daily" to get the old nightly behaviour back.
+  SYNC_FULL_WEEKDAY: z
+    .string()
+    .default("0")
+    .transform((v) => (v.trim().toLowerCase() === "daily" ? "daily" : Number(v)))
+    .refine((v) => v === "daily" || (Number.isInteger(v) && v >= 0 && v <= 6), {
+      message: "SYNC_FULL_WEEKDAY must be 0–6 (0 = Sunday) or daily",
+    }),
   SYNC_INCR_MINUTES: z.coerce.number().int().min(0).default(30),
 
   DATA_DIR: z.string().default("./data"),
