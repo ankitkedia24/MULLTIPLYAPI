@@ -1,0 +1,79 @@
+import { CustomerSyncBusyError, runCustomerSync } from "./customers/sync.js";
+import { SyncBusyError, runSync } from "./sync.js";
+/**
+ * In-process scheduler: a FULL sync at SYNC_FULL_HOUR on SYNC_FULL_WEEKDAY
+ * (weekly, Sunday by default — Mulltiply asked for the complete catalogue once
+ * a week, 12-09-2026; "daily" restores the nightly run) plus an INCREMENTAL
+ * sync every SYNC_INCR_MINUTES. A run that overlaps an in-flight one is
+ * skipped, not queued.
+ */
+/** The next full-sync instant strictly after `now` (server local time). */
+export function nextFullSyncAt(cfg, now) {
+    const next = new Date(now);
+    next.setHours(cfg.SYNC_FULL_HOUR, 0, 0, 0);
+    if (next <= now)
+        next.setDate(next.getDate() + 1);
+    if (cfg.SYNC_FULL_WEEKDAY !== "daily") {
+        while (next.getDay() !== cfg.SYNC_FULL_WEEKDAY)
+            next.setDate(next.getDate() + 1);
+    }
+    return next;
+}
+export function startScheduler(cfg, log = console.log) {
+    let fullTimer = null;
+    let incrTimer = null;
+    const trigger = async (mode) => {
+        try {
+            log(`[scheduler] starting ${mode} sync`);
+            await runSync(cfg, { mode });
+        }
+        catch (err) {
+            if (err instanceof SyncBusyError) {
+                log(`[scheduler] skipped ${mode} sync — another run is in progress`);
+            }
+            else {
+                log(`[scheduler] ${mode} sync failed: ${String(err)}`);
+            }
+        }
+        // Customers ride the same tick, after the items, so their weekly full
+        // lands right behind the item full and their deltas every half hour.
+        if (!cfg.CUSTOMER_SYNC_ENABLED)
+            return;
+        try {
+            log(`[scheduler] starting ${mode} customer sync`);
+            await runCustomerSync(cfg, { mode });
+        }
+        catch (err) {
+            if (err instanceof CustomerSyncBusyError) {
+                log(`[scheduler] skipped ${mode} customer sync — another run is in progress`);
+            }
+            else {
+                log(`[scheduler] ${mode} customer sync failed: ${String(err)}`);
+            }
+        }
+    };
+    const scheduleNextFull = () => {
+        const now = new Date();
+        const next = nextFullSyncAt(cfg, now);
+        const waitMs = next.getTime() - now.getTime();
+        log(`[scheduler] next full sync at ${next.toLocaleString()} (${cfg.SYNC_FULL_WEEKDAY === "daily" ? "daily" : "weekly"})`);
+        fullTimer = setTimeout(async () => {
+            await trigger("full");
+            scheduleNextFull();
+        }, waitMs);
+    };
+    scheduleNextFull();
+    if (cfg.SYNC_INCR_MINUTES > 0) {
+        log(`[scheduler] incremental sync every ${cfg.SYNC_INCR_MINUTES} min`);
+        incrTimer = setInterval(() => void trigger("incremental"), cfg.SYNC_INCR_MINUTES * 60_000);
+    }
+    return {
+        stop: () => {
+            if (fullTimer)
+                clearTimeout(fullTimer);
+            if (incrTimer)
+                clearInterval(incrTimer);
+        },
+    };
+}
+//# sourceMappingURL=scheduler.js.map
