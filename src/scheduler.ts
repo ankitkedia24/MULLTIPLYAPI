@@ -1,5 +1,6 @@
 import type { Config } from "./config.js";
 import { CustomerSyncBusyError, runCustomerSync } from "./customers/sync.js";
+import { activePause } from "./pause.js";
 import { SyncBusyError, runSync } from "./sync.js";
 
 export interface SchedulerHandle {
@@ -32,6 +33,11 @@ export function startScheduler(
   let incrTimer: NodeJS.Timeout | null = null;
 
   const trigger = async (mode: "full" | "incremental") => {
+    const pause = await activePause(cfg.DATA_DIR);
+    if (pause) {
+      log(`[scheduler] skipped ${mode} sync — paused until ${pause.until}`);
+      return;
+    }
     try {
       log(`[scheduler] starting ${mode} sync`);
       await runSync(cfg, { mode });

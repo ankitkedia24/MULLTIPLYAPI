@@ -105,7 +105,9 @@ All routes except `/health` require header `x-admin-key: <ADMIN_API_KEY>`.
 | `GET /health` | liveness + last run summary (no auth) |
 | `POST /sync` | body `{"mode":"full"\|"incremental","dryRun":false,"limit":100}` → `202 {runId}`; `409` if a run is in progress |
 | `GET /preview?limit=5` or `?isbn=…` | the exact payload that would be sent, plus validation findings — use this to demo the feed to Mulltiply |
-| `GET /status` | in-flight progress, watermark state, latest run report (incl. per-row errors) |
+| `GET /status` | in-flight progress, watermark state, active pause, latest run report (incl. per-row errors) |
+| `POST /pause` | body `{"until":"2026-10-10T11:00:00+05:30","reason":"…"}` — holds ALL automatic syncs (items + customers) until that time, then resumes by itself; stored in `DATA_DIR/pause.json` so it survives deploys. Manual `/sync` returns `423` while paused unless the body has `"force": true` |
+| `DELETE /pause` | lift the hold now |
 
 Run reports are also written to `data/runs/run-<timestamp>.json`.
 

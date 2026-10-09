@@ -11,6 +11,7 @@ import {
 } from "./customers/sync.js";
 import { customerToRetailer } from "./customers/transform.js";
 import type { MulltiplyRetailer } from "./customers/types.js";
+import { activePause, clearPause, writePause } from "./pause.js";
 import { readLatestReport } from "./report.js";
 import { startScheduler } from "./scheduler.js";
 import { readState } from "./state.js";
@@ -46,13 +47,51 @@ app.addHook("onRequest", async (req, reply) => {
 
 app.get("/health", async () => {
   const state = await readState(cfg.DATA_DIR);
+  const pause = await activePause(cfg.DATA_DIR);
   return {
     ok: true,
     uptimeSeconds: Math.round(process.uptime()),
     inFlight: getInFlight(),
+    pausedUntil: pause?.until ?? null,
     lastRun: state.lastRun,
   };
 });
+
+// ── timed hold on all automatic syncs; expires by itself ─────────────────
+const pauseBodySchema = z.object({
+  until: z.string().refine((s) => Number.isFinite(new Date(s).getTime()), "until must be an ISO timestamp"),
+  reason: z.string().max(200).optional(),
+});
+
+app.post("/pause", async (req, reply) => {
+  const parsed = pauseBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const until = new Date(parsed.data.until);
+  if (until.getTime() <= Date.now()) {
+    return reply.code(400).send({ error: "until must be in the future" });
+  }
+  const record = {
+    until: until.toISOString(),
+    setAt: new Date().toISOString(),
+    ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+  };
+  await writePause(cfg.DATA_DIR, record);
+  return reply.send({ paused: true, ...record, inFlight: getInFlight() });
+});
+
+app.delete("/pause", async () => {
+  await clearPause(cfg.DATA_DIR);
+  return { paused: false };
+});
+
+/** 423 while paused, unless the caller explicitly forces a manual run. */
+async function refuseIfPaused(force: boolean | undefined) {
+  if (force) return null;
+  const pause = await activePause(cfg.DATA_DIR);
+  return pause
+    ? { error: `syncs are paused until ${pause.until} — send "force": true to run anyway`, pausedUntil: pause.until }
+    : null;
+}
 
 const syncBodySchema = z
   .object({
@@ -60,6 +99,7 @@ const syncBodySchema = z
     dryRun: z.boolean().default(false),
     limit: z.number().int().positive().max(100000).optional(),
     isbn: z.string().min(1).optional(),
+    force: z.boolean().optional(),
   })
   .default({ mode: "full", dryRun: false });
 
@@ -68,17 +108,20 @@ app.post("/sync", async (req, reply) => {
   if (!parsed.success) {
     return reply.code(400).send({ error: parsed.error.issues });
   }
+  const paused = await refuseIfPaused(parsed.data.force);
+  if (paused) return reply.code(423).send(paused);
   const inFlight = getInFlight();
   if (inFlight) {
     return reply.code(409).send({ error: "sync already running", inFlight });
   }
   const runId = new Date().toISOString().replace(/[:.]/g, "-").replace("Z", "");
-  const opts = { ...parsed.data, runId };
+  const { force: _force, ...syncOpts } = parsed.data;
+  const opts = { ...syncOpts, runId };
   // fire-and-forget: progress is visible via GET /status
   void runSync(cfg, opts, { log: (m) => app.log.info(m) }).catch((err) => {
     if (!(err instanceof SyncBusyError)) app.log.error(err);
   });
-  return reply.code(202).send({ started: true, runId, opts: parsed.data });
+  return reply.code(202).send({ started: true, runId, opts: syncOpts });
 });
 
 app.get("/preview", async (req, reply) => {
@@ -118,6 +161,7 @@ app.get("/status", async () => {
   const latestReport = await readLatestReport(cfg.DATA_DIR);
   const latestCustomerReport = await readLatestCustomerReport(cfg.DATA_DIR);
   return {
+    pause: await activePause(cfg.DATA_DIR),
     inFlight: getInFlight(),
     customerInFlight: getCustomerInFlight(),
     state,
@@ -133,19 +177,23 @@ const customerSyncBodySchema = z
     dryRun: z.boolean().default(false),
     limit: z.number().int().positive().max(100000).optional(),
     customerCode: z.string().min(1).optional(),
+    force: z.boolean().optional(),
   })
   .default({ mode: "full", dryRun: false });
 
 app.post("/sync/customers", async (req, reply) => {
   const parsed = customerSyncBodySchema.safeParse(req.body ?? {});
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const paused = await refuseIfPaused(parsed.data.force);
+  if (paused) return reply.code(423).send(paused);
   const inFlight = getCustomerInFlight();
   if (inFlight) return reply.code(409).send({ error: "customer sync already running", inFlight });
   const runId = new Date().toISOString().replace(/[:.]/g, "-").replace("Z", "");
-  void runCustomerSync(cfg, { ...parsed.data, runId }, { log: (m) => app.log.info(m) }).catch((err) => {
+  const { force: _force, ...customerOpts } = parsed.data;
+  void runCustomerSync(cfg, { ...customerOpts, runId }, { log: (m) => app.log.info(m) }).catch((err) => {
     if (!(err instanceof CustomerSyncBusyError)) app.log.error(err);
   });
-  return reply.code(202).send({ started: true, runId, opts: parsed.data });
+  return reply.code(202).send({ started: true, runId, opts: customerOpts });
 });
 
 app.get("/preview/customers", async (req, reply) => {
